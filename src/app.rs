@@ -1,33 +1,100 @@
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
-    // Example stuff:
-    label: String,
+use egui::{pos2, vec2, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use image::ColorType;
+use std::io::Cursor;
+use wasm_bindgen::prelude::*;
 
-    // this how you opt-out of serialization of a member
-    #[serde(skip)]
-    value: f32,
+#[wasm_bindgen]
+extern "C" {
+    fn download(fileName: &str, text: &str);
 }
 
-impl Default for TemplateApp {
-    fn default() -> Self {
-        Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
-        }
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(default)] // #[serde(skip)]
+pub struct AmvApp {
+    #[serde(skip)]
+    texture: Option<ImgData>,
+}
+#[derive(Clone)]
+enum DragMode {
+    Image,
+    CropTop,
+    CropBottom,
+    CropLeft,
+    CropRight,
+}
+
+struct ImgData {
+    texture: egui::TextureHandle,
+    image: image::DynamicImage,
+    image_size: Vec2,
+    image_pos: Pos2,
+    last_pos: Pos2,
+    cropping: Rect,
+    drag_mode: DragMode,
+}
+
+#[derive(Clone)]
+struct CropHoverInfo {
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+}
+
+impl Into<DragMode> for CropHoverInfo {
+    fn into(self) -> DragMode {
+       if self.top {
+        return DragMode::CropTop;
+       }
+       if self.bottom {
+        return DragMode::CropBottom;
+       }
+       if self.left {
+        return DragMode::CropLeft;
+       }
+       if self.right {
+        return DragMode::CropRight;
+       }
+       return DragMode::Image;
     }
 }
 
-impl TemplateApp {
-    /// Called once before the first frame.
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // This is also where you can customize the look and feel of egui using
-        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+fn get_hover_info(currentClipping: &Rect, ui: &Ui) -> CropHoverInfo {
+    let vec = vec2(5., 5.);
+    let info = CropHoverInfo {
+        top: is_hover(ui, egui::Rect {
+            min: currentClipping.left_top() - vec,
+            max: currentClipping.right_top() + vec,
+        }),
+        bottom: is_hover(ui, egui::Rect {
+            min: currentClipping.left_bottom() - vec,
+            max: currentClipping.right_bottom() + vec,
+        }),
+        left: is_hover(ui, egui::Rect {
+            min: currentClipping.left_top() - vec,
+            max: currentClipping.left_bottom() + vec,
+        }),
+        right: is_hover(ui, egui::Rect {
+            min: currentClipping.right_top() - vec,
+            max: currentClipping.right_bottom() + vec,
+        }),
+    };
+    return info;
+}
 
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
+fn is_hover(ui: &Ui, rect: Rect) -> bool {
+    ui.interact(rect, ui.next_auto_id(), Sense::hover())
+        .hovered()
+}
+
+impl Default for AmvApp {
+    fn default() -> Self {
+        Self { texture: None }
+    }
+}
+
+impl AmvApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(storage) = cc.storage {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
@@ -36,81 +103,150 @@ impl TemplateApp {
     }
 }
 
-impl eframe::App for TemplateApp {
-    /// Called by the frame work to save state before shutdown.
+impl eframe::App for AmvApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting, which may be many times per second.
-    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let Self { label, value } = self;
+        egui::Area::new("area")
+            .fixed_pos(Pos2::new(0., 0.))
+            .show(ctx, |ui| {
+                ui.allocate_at_least(ctx.screen_rect().size(), Sense::click());
+                let mut texture: &mut ImgData = self.texture.get_or_insert_with(|| {
+                    let image_bytes = include_bytes!("../assets/starship.jpg");
+                    let image: image::DynamicImage = image::load_from_memory(image_bytes).unwrap();
 
-        // Examples of how to create different panels and windows.
-        // Pick whichever suits you.
-        // Tip: a good default choice is to just keep the `CentralPanel`.
-        // For inspiration and more examples, go to https://emilk.github.io/egui
-
-        #[cfg(not(target_arch = "wasm32"))] // no File->Quit on web pages!
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Quit").clicked() {
-                        _frame.close();
-                    }
-                });
-            });
-        });
-
-        egui::SidePanel::left("side_panel").show(ctx, |ui| {
-            ui.heading("Side Panel");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(label);
-            });
-
-            ui.add(egui::Slider::new(value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                *value += 1.0;
-            }
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("powered by ");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.label(" and ");
-                    ui.hyperlink_to(
-                        "eframe",
-                        "https://github.com/emilk/egui/tree/master/crates/eframe",
+                    let size = [image.width() as _, image.height() as _];
+                    let image_buffer = image.to_rgba8();
+                    let pixels = image_buffer.as_flat_samples();
+                    let texture = ui.ctx().load_texture(
+                        "image2",
+                        egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()),
+                        Default::default(),
                     );
-                    ui.label(".");
+
+                    return ImgData {
+                        image,
+                        texture,
+                        image_size: Vec2::new(500., 500.),
+                        image_pos: pos2(0., 0.),
+                        last_pos: pos2(0., 0.),
+                        cropping: Rect {
+                            min: pos2(0., 0.),
+                            max: pos2(1., 1.),
+                        },
+                        drag_mode: DragMode::Image
+                    };
                 });
+
+                let hover = ctx.input(|x| x.pointer.hover_pos());
+                let pressed = ui.input(|x| x.pointer.button_pressed(egui::PointerButton::Primary));
+                let down = ui.input(|x| x.pointer.button_down(egui::PointerButton::Primary));
+                let origin = ctx.input(|x| x.pointer.press_origin());
+                let mut currentClipping = Rect {
+                    min: texture.image_pos
+                        + vec2(
+                            texture.cropping.min.x * texture.image_size.x,
+                            texture.cropping.min.y * texture.image_size.y,
+                        ),
+                    max: texture.image_pos
+                        + vec2(
+                            texture.cropping.max.x * texture.image_size.x,
+                            texture.cropping.max.y * texture.image_size.y,
+                        ),
+                };
+                let crop_hover_info = get_hover_info(&currentClipping, ui);
+                
+
+                if let Some(hover) = hover {
+                    if pressed {
+                        texture.drag_mode = crop_hover_info.clone().into();
+                            texture.last_pos = 
+                            match &texture.drag_mode {
+                                DragMode::Image => texture.last_pos,
+                                DragMode::CropTop => currentClipping.left_top(),
+                                DragMode::CropBottom => currentClipping.right_bottom(),
+                                DragMode::CropLeft => currentClipping.left_top(),
+                                DragMode::CropRight => currentClipping.right_bottom(),
+                            };
+
+                        texture.last_pos = texture.image_pos;
+                    }
+                    if down {
+                        if let Some(origin) = origin {
+                            let diff = hover - origin;
+                            match &texture.drag_mode {
+                                DragMode::Image => {
+                                    texture.image_pos = texture.last_pos + diff;
+                                },
+                                DragMode::CropTop => {
+                                    let newTop = texture.last_pos + diff;
+                                    texture.cropping.min.y = (newTop.y - texture.image_pos.y) / texture.image_size.y;
+                                    currentClipping.min.y = newTop.y;
+                                },
+                                DragMode::CropBottom => {},
+                                DragMode::CropLeft => {},
+                                DragMode::CropRight => {},
+                            };
+                            
+                        }
+                    }
+                    let delta = ui.input(|x| x.zoom_delta());
+                    let diff = texture.image_pos - hover;
+                    let new_diff = diff * delta;
+                    let change_diff = new_diff - diff;
+                    texture.image_pos = texture.image_pos + change_diff;
+
+                    texture.image_size = texture.image_size * delta;
+                }
+
+                
+
+                egui::Image::new(&texture.texture, texture.image_size).paint_at(
+                    ui,
+                    egui::Rect {
+                        min: texture.image_pos,
+                        max: texture.image_pos + texture.image_size,
+                    },
+                );
+
+                let stroke = Stroke::new(2., Color32::GREEN);
+                let hover_stroke = Stroke::new(2., Color32::BLUE);
+
+                ui.painter().line_segment(
+                    [currentClipping.left_top(), currentClipping.right_top()],
+                    if crop_hover_info.top {hover_stroke} else {stroke},
+                );
+                ui.painter().line_segment(
+                    [
+                        currentClipping.left_bottom(),
+                        currentClipping.right_bottom(),
+                    ],
+                    if crop_hover_info.bottom {hover_stroke} else {stroke},
+                );
+                ui.painter().line_segment(
+                    [currentClipping.left_top(), currentClipping.left_bottom()],
+                    if crop_hover_info.left {hover_stroke} else {stroke},
+                );
+                ui.painter().line_segment(
+                    [currentClipping.right_top(), currentClipping.right_bottom()],
+                    if crop_hover_info.right {hover_stroke} else {stroke},
+                );
             });
+
+        egui::TopBottomPanel::bottom("my_panel").show(ctx, |ui| {
+            let texture: &ImgData = self.texture.as_ref().unwrap();
+            if ui.button("Download").clicked() {
+                let mut vec = Vec::new();
+                let mut c = Cursor::new(&mut vec);
+                texture
+                    .image
+                    .write_to(&mut c, image::ImageOutputFormat::Png)
+                    .unwrap();
+                let base64 = base64::encode(vec);
+                download("test.png", &base64);
+            }
         });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // The central panel the region left after adding TopPanel's and SidePanel's
-
-            ui.heading("eframe template");
-            ui.hyperlink("https://github.com/emilk/eframe_template");
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/master/",
-                "Source code."
-            ));
-            egui::warn_if_debug_build(ui);
-        });
-
-        if false {
-            egui::Window::new("Window").show(ctx, |ui| {
-                ui.label("Windows can be moved by dragging them.");
-                ui.label("They are automatically sized based on contents.");
-                ui.label("You can turn on resizing and scrolling if you like.");
-                ui.label("You would normally choose either panels OR windows.");
-            });
-        }
     }
 }
