@@ -1,17 +1,20 @@
 [package]
 name = "eframe_template"
 version = "0.1.0"
-authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
+authors = ["Niklas Nordkamp"]
 edition = "2021"
 rust-version = "1.65"
 
 
 [dependencies]
+tiny-skia = "0.9.0"
+usvg = "0.32.0"
+resvg = "0.32.0"
 base64 = "0.21.0"
 wasm-bindgen = "0.2.84"
 egui = "0.21.0"
 egui_extras =  { version = "0.21.0", features = ["image", "svg"] }
-image = { version = "0.24", features = ["jpeg", "png"] }
+image = { version = "0.24", features = ["jpeg", "png", "qoi"] }
 eframe = { version = "0.21.0", default-features = false, features = [
     "accesskit",     # Make egui comptaible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
