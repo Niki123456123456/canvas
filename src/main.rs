@@ -9,7 +9,7 @@ fn main() -> eframe::Result<()> {
 
     let mut native_options = eframe::NativeOptions::default();
     eframe::run_native(
-        "amv",
+        "amv42",
         native_options,
         Box::new(|cc| Box::new(eframe_template::AmvApp::new(cc))),
     )
