@@ -758,7 +758,7 @@ dependencies = [
 
 [[package]]
 name = "eframe_template"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
