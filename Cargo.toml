@@ -4,6 +4,7 @@ version = "0.2.1"
 authors = ["Niklas Nordkamp"]
 edition = "2021"
 rust-version = "1.65"
+build = "src/build.rs"
 
 
 [dependencies]

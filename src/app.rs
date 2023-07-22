@@ -6,6 +6,9 @@ use std::io::Cursor;
 use usvg::{ScreenSize, ShapeRendering, StrokeMiterlimit, TreeParsing};
 use wasm_bindgen::prelude::*;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+
 #[wasm_bindgen]
 extern "C" {
     fn download(fileName: &str, text: &str);
@@ -792,6 +795,8 @@ impl eframe::App for AmvApp {
                 }
             
                 ui.color_edit_button_srgba(&mut texture.back_ground_color);
+
+                ui.label(VERSION);
             });
         });
 

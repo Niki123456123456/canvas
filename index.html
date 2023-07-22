@@ -16,7 +16,6 @@
 
     <link data-trunk rel="icon" href="assets/favicon.ico">
 
-
     <link data-trunk rel="copy-file" href="assets/sw.js" />
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" />
@@ -125,6 +124,29 @@
     <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
     <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
     <script>
+        async function getData() {
+            let response = await fetch('/app.json');
+            let data = await response.json();
+            let version = localStorage.getItem("version");
+            localStorage.setItem("version", data.version);
+            if (version != null && version != data.version) {
+                localStorage.clear();
+                caches.keys().then(keys => {
+                    keys.forEach(key => caches.delete(key))
+                });
+                console.log(`${version} => ${data.version}`);
+                location.reload(true);
+            } else {
+                console.log(`${version} == ${data.version}`);
+            }
+        }
+
+        getData();
+
+        //localStorage.clear();
+
+
+
         function download(filename, text) {
             var element = document.createElement('a');
             element.setAttribute('href', 'data:application/octet-stream;base64,' + text);
