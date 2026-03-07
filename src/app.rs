@@ -113,18 +113,28 @@ impl SubImage {
         return view_rect;
     }
 
-    fn resize_for_aspectratio(&mut self) {
+    fn resize_for_aspectratio(&mut self, x_preserve_min : bool, y_preserve_min : bool) {
         // r = w / h | * h
         // w = r * h | / r
         // h = w / r
 
         let currentratio = self.image_rect.width() / self.image_rect.height();
         if currentratio > self.original_aspectratio {
-            self.image_rect
-                .set_height(self.image_rect.width() / self.original_aspectratio);
+            let h = self.image_rect.width() / self.original_aspectratio;
+            if y_preserve_min {
+                self.image_rect.max.y = self.image_rect.min.y + h;
+            } else {
+                self.image_rect.min.y =  self.image_rect.max.y - h;
+            }
+            
         } else if currentratio < self.original_aspectratio {
-            self.image_rect
-                .set_width(self.original_aspectratio * self.image_rect.height());
+            let w = self.original_aspectratio * self.image_rect.height();
+            if x_preserve_min {
+                self.image_rect.max.x = self.image_rect.min.x + w;
+            } else {
+                self.image_rect.min.x = self.image_rect.max.x - w;
+            }
+            
         }
     }
 }
@@ -627,6 +637,11 @@ impl eframe::App for AmvApp {
                             state.drag_mode = crop_hover_info;
                             self.selected_image = hover_image;
 
+                            let pos_rect = if let Some(selected) = self.selected_image {
+                                self.images[selected].image_rect
+                            } else {
+                                current_cropping
+                            };
                             state.last_pos = match &state.drag_mode {
                                 DragMode::Image => {
                                     if let Some(selected) = self.selected_image {
@@ -636,24 +651,25 @@ impl eframe::App for AmvApp {
                                         state.last_pos
                                     }
                                 }
-                                DragMode::CropTop => current_cropping.left_top(),
-                                DragMode::CropBottom => current_cropping.right_bottom(),
-                                DragMode::CropLeft => current_cropping.left_top(),
-                                DragMode::CropLeftTop => current_cropping.left_top(),
-                                DragMode::CropLeftBottom => current_cropping.left_bottom(),
-                                DragMode::CropRight => current_cropping.right_bottom(),
-                                DragMode::CropRightTop => current_cropping.right_top(),
-                                DragMode::CropRightBottom => {
-                                    if let Some(selected) = self.selected_image {
-                                        state.image_rect.min
-                                            + vec2(
-                                                self.images[selected].image_rect.right_bottom().x,
-                                                self.images[selected].image_rect.right_bottom().y,
-                                            ) * state.scale
-                                    } else {
-                                        current_cropping.right_bottom()
-                                    }
-                                }
+                                DragMode::CropTop => pos_rect.left_top(),
+                                DragMode::CropBottom => pos_rect.right_bottom(),
+                                DragMode::CropLeft => pos_rect.left_top(),
+                                DragMode::CropLeftTop => pos_rect.left_top(),
+                                DragMode::CropLeftBottom => pos_rect.left_bottom(),
+                                DragMode::CropRight => pos_rect.right_bottom(),
+                                DragMode::CropRightTop => pos_rect.right_top(),
+                                DragMode::CropRightBottom => pos_rect.right_bottom(),
+                            };
+
+                            if state.drag_mode != DragMode::Image && self.selected_image.is_some() {
+                                state.last_pos =
+                                    state.image_rect.min + state.last_pos.to_vec2() * state.scale
+                            }
+
+                            let rect = if let Some(selected) = self.selected_image {
+                                self.images[selected].image_rect
+                            } else {
+                                state.cropping
                             };
                             state.t = match &state.drag_mode {
                                 DragMode::Image => {
@@ -664,20 +680,14 @@ impl eframe::App for AmvApp {
                                         pos2(0., 0.)
                                     }
                                 }
-                                DragMode::CropTop => state.cropping.left_top(),
-                                DragMode::CropBottom => state.cropping.right_bottom(),
-                                DragMode::CropLeft => state.cropping.left_top(),
-                                DragMode::CropRight => state.cropping.right_bottom(),
-                                DragMode::CropLeftTop => state.cropping.left_top(),
-                                DragMode::CropLeftBottom => state.cropping.left_bottom(),
-                                DragMode::CropRightTop => state.cropping.right_top(),
-                                DragMode::CropRightBottom => {
-                                    if let Some(selected) = self.selected_image {
-                                        self.images[selected].image_rect.right_bottom()
-                                    } else {
-                                        state.cropping.right_bottom()
-                                    }
-                                }
+                                DragMode::CropTop => rect.left_top(),
+                                DragMode::CropBottom => rect.right_bottom(),
+                                DragMode::CropLeft => rect.left_top(),
+                                DragMode::CropRight => rect.right_bottom(),
+                                DragMode::CropLeftTop => rect.left_top(),
+                                DragMode::CropLeftBottom => rect.left_bottom(),
+                                DragMode::CropRightTop => rect.right_top(),
+                                DragMode::CropRightBottom => rect.right_bottom(),
                             };
 
                             state.last_pos = state.image_rect.min;
@@ -694,78 +704,100 @@ impl eframe::App for AmvApp {
                                 let max = image_pos + state.cropping.max.to_vec2() * image_size;
                                 let min = image_pos + state.cropping.min.to_vec2() * image_size;
 
-                                match &state.drag_mode {
-                                    DragMode::Image => {
-                                        if let Some(selected) = self.selected_image {
-                                            let image_size =
-                                                self.images[selected].image_rect.size();
-                                            let new_pos = new_pos - state.image_rect.min;
-                                            let new_pos = vec2(
-                                                new_pos.x / state.scale,
-                                                new_pos.y / state.scale,
-                                            );
-                                            self.images[selected].image_rect.min =
-                                                state.t + new_pos;
-                                            self.images[selected].image_rect.max =
-                                                state.t + new_pos + image_size;
-                                        } else {
+                                if let Some(selected) = self.selected_image {
+                                    let selected_image = &mut self.images[selected];
+
+                                    let new_pos =
+                                        state.t + (new_pos - state.image_rect.min) / state.scale;
+                                    let image_size = selected_image.image_rect.size();
+                                    match &state.drag_mode {
+                                        DragMode::Image => {
+                                            selected_image.image_rect.min = new_pos;
+                                            selected_image.image_rect.max = new_pos + image_size;
+                                        }
+                                        DragMode::CropTop => {
+                                            selected_image.image_rect.min.y = new_pos.y;
+                                        }
+                                        DragMode::CropBottom => {
+                                            selected_image.image_rect.max.y = new_pos.y;
+                                        }
+                                        DragMode::CropLeft => {
+                                            selected_image.image_rect.min.x = new_pos.x;
+                                        }
+                                        DragMode::CropRight => {
+                                            selected_image.image_rect.max.x = new_pos.x;
+                                        }
+                                        DragMode::CropLeftTop => {
+                                            selected_image.image_rect.min = new_pos;
+                                            if self.lock_aspectratio {
+                                                selected_image.resize_for_aspectratio(false, false);
+                                            }
+                                        }
+                                        DragMode::CropRightTop => {
+                                            selected_image.image_rect.max.x = new_pos.x;
+                                            selected_image.image_rect.min.y = new_pos.y;
+                                            if self.lock_aspectratio {
+                                                selected_image.resize_for_aspectratio(true, false);
+                                            }
+                                        }
+                                        DragMode::CropLeftBottom => {
+                                            selected_image.image_rect.min.x = new_pos.x;
+                                            selected_image.image_rect.max.y = new_pos.y;
+                                            if self.lock_aspectratio {
+                                                selected_image.resize_for_aspectratio(false, true);
+                                            }
+                                        }
+                                        DragMode::CropRightBottom => {
+                                            selected_image.image_rect.max = new_pos;
+                                            if self.lock_aspectratio {
+                                                selected_image.resize_for_aspectratio(true, true);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    match &state.drag_mode {
+                                        DragMode::Image => {
                                             state.image_rect.min = new_pos;
                                             state.image_rect.max = new_pos + image_size;
                                         }
-                                    }
-                                    DragMode::CropTop => {
-                                        state.cropping.min.y = new.y;
-                                        current_cropping.min.y = min.y;
-                                    }
-                                    DragMode::CropBottom => {
-                                        state.cropping.max.y = new.y;
-                                        current_cropping.max.y = max.y;
-                                    }
-                                    DragMode::CropLeft => {
-                                        state.cropping.min.x = new.x;
-                                        current_cropping.min.x = min.x;
-                                    }
-                                    DragMode::CropRight => {
-                                        state.cropping.max.x = new.x;
-                                        current_cropping.max.x = max.x;
-                                    }
-                                    DragMode::CropLeftTop => {
-                                        state.cropping.min = new;
-                                        current_cropping.min = min;
-                                    }
-                                    DragMode::CropRightTop => {
-                                        state.cropping.max.x = new.x;
-                                        state.cropping.min.y = new.y;
-                                        current_cropping.max.x = max.x;
-                                        current_cropping.min.y = min.y;
-                                    }
-                                    DragMode::CropLeftBottom => {
-                                        state.cropping.min.x = new.x;
-                                        state.cropping.max.y = new.y;
-                                        current_cropping.min.x = min.x;
-                                        current_cropping.max.y = max.y;
-                                    }
-                                    DragMode::CropRightBottom => {
-                                        if let Some(selected) = self.selected_image {
-                                            let new_pos = new_pos - state.image_rect.min;
-                                            let new_pos = vec2(
-                                                new_pos.x / state.scale,
-                                                new_pos.y / state.scale,
-                                            );
-                                            self.images[selected].image_rect.max.x =
-                                                state.t.x + new_pos.x;
-                                            self.images[selected].image_rect.max.y =
-                                                state.t.y + new_pos.y;
-
-                                            if self.lock_aspectratio {
-                                                self.images[selected].resize_for_aspectratio();
-                                            }
-                                        } else {
-                                            state.cropping.max = new; 
+                                        DragMode::CropTop => {
+                                            state.cropping.min.y = new.y;
+                                            current_cropping.min.y = min.y;
+                                        }
+                                        DragMode::CropBottom => {
+                                            state.cropping.max.y = new.y;
+                                            current_cropping.max.y = max.y;
+                                        }
+                                        DragMode::CropLeft => {
+                                            state.cropping.min.x = new.x;
+                                            current_cropping.min.x = min.x;
+                                        }
+                                        DragMode::CropRight => {
+                                            state.cropping.max.x = new.x;
+                                            current_cropping.max.x = max.x;
+                                        }
+                                        DragMode::CropLeftTop => {
+                                            state.cropping.min = new;
+                                            current_cropping.min = min;
+                                        }
+                                        DragMode::CropRightTop => {
+                                            state.cropping.max.x = new.x;
+                                            state.cropping.min.y = new.y;
+                                            current_cropping.max.x = max.x;
+                                            current_cropping.min.y = min.y;
+                                        }
+                                        DragMode::CropLeftBottom => {
+                                            state.cropping.min.x = new.x;
+                                            state.cropping.max.y = new.y;
+                                            current_cropping.min.x = min.x;
+                                            current_cropping.max.y = max.y;
+                                        }
+                                        DragMode::CropRightBottom => {
+                                            state.cropping.max = new;
                                             current_cropping.max = max;
                                         }
-                                    }
-                                };
+                                    };
+                                }
                             }
                         }
                     }
