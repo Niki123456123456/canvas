@@ -1,6 +1,8 @@
 use eframe::glow::HasContext;
 use egui::{pos2, vec2, Color32, LayerId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
-use image::{ColorType, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba, imageops};
+use image::{
+    imageops, ColorType, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba,
+};
 use resvg::FitTo;
 use std::borrow::Cow;
 use std::io::Cursor;
@@ -686,6 +688,12 @@ impl eframe::App for AmvApp {
                                 let new_pos = state.last_pos + diff;
                                 let image_size = state.image_rect.size();
                                 let image_pos = state.image_rect.min;
+
+                                let new = state.t + (new_pos - image_pos) / image_size;
+
+                                let max = image_pos + state.cropping.max.to_vec2() * image_size;
+                                let min = image_pos + state.cropping.min.to_vec2() * image_size;
+
                                 match &state.drag_mode {
                                     DragMode::Image => {
                                         if let Some(selected) = self.selected_image {
@@ -706,58 +714,36 @@ impl eframe::App for AmvApp {
                                         }
                                     }
                                     DragMode::CropTop => {
-                                        state.cropping.min.y =
-                                            state.t.y + (new_pos.y - image_pos.y) / image_size.y;
-                                        current_cropping.min.y =
-                                            image_pos.y + state.cropping.min.y * image_size.y;
+                                        state.cropping.min.y = new.y;
+                                        current_cropping.min.y = min.y;
                                     }
                                     DragMode::CropBottom => {
-                                        state.cropping.max.y =
-                                            state.t.y + (new_pos.y - image_pos.y) / image_size.y;
-                                        current_cropping.max.y =
-                                            image_pos.y + state.cropping.max.y * image_size.y;
+                                        state.cropping.max.y = new.y;
+                                        current_cropping.max.y = max.y;
                                     }
                                     DragMode::CropLeft => {
-                                        state.cropping.min.x =
-                                            state.t.x + (new_pos.x - image_pos.x) / image_size.x;
-                                        current_cropping.min.x =
-                                            image_pos.x + state.cropping.min.x * image_size.x;
+                                        state.cropping.min.x = new.x;
+                                        current_cropping.min.x = min.x;
                                     }
                                     DragMode::CropRight => {
-                                        state.cropping.max.x =
-                                            state.t.x + (new_pos.x - image_pos.x) / image_size.x;
-                                        current_cropping.max.x =
-                                            image_pos.x + state.cropping.max.x * image_size.x;
+                                        state.cropping.max.x = new.x;
+                                        current_cropping.max.x = max.x;
                                     }
                                     DragMode::CropLeftTop => {
-                                        state.cropping.min.x =
-                                            state.t.x + (new_pos.x - image_pos.x) / image_size.x;
-                                        state.cropping.min.y =
-                                            state.t.y + (new_pos.y - image_pos.y) / image_size.y;
-                                        current_cropping.min.x =
-                                            image_pos.x + state.cropping.min.x * image_size.x;
-                                        current_cropping.min.y =
-                                            image_pos.y + state.cropping.min.y * image_size.y;
+                                        state.cropping.min = new;
+                                        current_cropping.min = min;
                                     }
                                     DragMode::CropRightTop => {
-                                        state.cropping.max.x =
-                                            state.t.x + (new_pos.x - image_pos.x) / image_size.x;
-                                        state.cropping.min.y =
-                                            state.t.y + (new_pos.y - image_pos.y) / image_size.y;
-                                        current_cropping.max.x =
-                                            image_pos.x + state.cropping.max.x * image_size.x;
-                                        current_cropping.min.y =
-                                            image_pos.y + state.cropping.min.y * image_size.y;
+                                        state.cropping.max.x = new.x;
+                                        state.cropping.min.y = new.y;
+                                        current_cropping.max.x = max.x;
+                                        current_cropping.min.y = min.y;
                                     }
                                     DragMode::CropLeftBottom => {
-                                        state.cropping.min.x =
-                                            state.t.x + (new_pos.x - image_pos.x) / image_size.x;
-                                        state.cropping.max.y =
-                                            state.t.y + (new_pos.y - image_pos.y) / image_size.y;
-                                        current_cropping.min.x =
-                                            image_pos.x + state.cropping.min.x * image_size.x;
-                                        current_cropping.max.y =
-                                            image_pos.y + state.cropping.max.y * image_size.y;
+                                        state.cropping.min.x = new.x;
+                                        state.cropping.max.y = new.y;
+                                        current_cropping.min.x = min.x;
+                                        current_cropping.max.y = max.y;
                                     }
                                     DragMode::CropRightBottom => {
                                         if let Some(selected) = self.selected_image {
@@ -775,14 +761,8 @@ impl eframe::App for AmvApp {
                                                 self.images[selected].resize_for_aspectratio();
                                             }
                                         } else {
-                                            state.cropping.max.x = state.t.x
-                                                + (new_pos.x - image_pos.x) / image_size.x;
-                                            state.cropping.max.y = state.t.y
-                                                + (new_pos.y - image_pos.y) / image_size.y;
-                                            current_cropping.max.x =
-                                                image_pos.x + state.cropping.max.x * image_size.x;
-                                            current_cropping.max.y =
-                                                image_pos.y + state.cropping.max.y * image_size.y;
+                                            state.cropping.max = new; 
+                                            current_cropping.max = max;
                                         }
                                     }
                                 };
@@ -880,11 +860,11 @@ impl eframe::App for AmvApp {
                         &texture.back_ground_color,
                     );
                     for image in self.images.iter().rev() {
-                         let [w, h] = [
-                                    image.image_rect.width() as u32,
-                                    image.image_rect.height() as u32,
-                                ];
-                        let dynamic_image : Cow<'_, image::DynamicImage> = match &image.source {
+                        let [w, h] = [
+                            image.image_rect.width() as u32,
+                            image.image_rect.height() as u32,
+                        ];
+                        let dynamic_image: Cow<'_, image::DynamicImage> = match &image.source {
                             ImageSource::Vector(tree) => {
                                 let mut pixmap = tiny_skia::Pixmap::new(w, h)
                                     .ok_or_else(|| {
@@ -909,20 +889,20 @@ impl eframe::App for AmvApp {
                                 Cow::Owned(image::DynamicImage::ImageRgba8(buffer))
                             }
                             ImageSource::Raster(dynamic_image) => {
-                                 Cow::Owned( dynamic_image.resize(w, h, imageops::Triangle))
-                            },
+                                Cow::Owned(dynamic_image.resize(w, h, imageops::Triangle))
+                            }
                         };
-                       
+
                         image::imageops::overlay(
-                                &mut crop,
-                                dynamic_image.as_ref(),
-                                (image.image_rect.min.x
-                                    - texture.cropping.min.x * (texture.image.width() as f32))
-                                    as i64,
-                                (image.image_rect.min.y
-                                    - texture.cropping.min.y * (texture.image.height() as f32))
-                                    as i64,
-                            );
+                            &mut crop,
+                            dynamic_image.as_ref(),
+                            (image.image_rect.min.x
+                                - texture.cropping.min.x * (texture.image.width() as f32))
+                                as i64,
+                            (image.image_rect.min.y
+                                - texture.cropping.min.y * (texture.image.height() as f32))
+                                as i64,
+                        );
                     }
                     export_image(&crop, self.formats[self.selected_format]);
                 }
