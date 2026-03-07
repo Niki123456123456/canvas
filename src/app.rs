@@ -58,9 +58,14 @@ struct AppState {
     scale: f32,
 }
 
+pub enum ImageSource {
+    Vector(usvg::Tree),
+    Raster(image::DynamicImage),
+}
+
 struct SubImage {
     name: String,
-    tree: usvg::Tree,
+    tree: ImageSource,
     texture: egui::TextureHandle,
     image_rect: Rect,
     cropping: Rect,
@@ -70,25 +75,28 @@ struct SubImage {
 
 impl SubImage {
     fn change_forgroundcolor(&mut self, color: [u8; 3], ui: &Ui) -> Result<(), String> {
-        let factor = 10;
-        self.foreground_color = color;
-        let pixmap_size = self.tree.size.to_screen_size();
-        let [w, h] = [pixmap_size.width() * factor, pixmap_size.height() * factor];
-        let mut pixmap = tiny_skia::Pixmap::new(w, h)
-            .ok_or_else(|| format!("Failed to create SVG Pixmap of size {}x{}", w, h))?;
-        resvg::render(
-            &self.tree,
-            FitTo::Size(w, h),
-            Default::default(),
-            pixmap.as_mut(),
-        )
-        .ok_or_else(|| "Failed to render SVG".to_owned())?;
-        let mut image = egui::ColorImage::from_rgba_unmultiplied([w as _, h as _], pixmap.data());
-        for pixel in image.pixels.iter_mut() {
-            *pixel = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], pixel.a());
-        }
+        if let ImageSource::Vector(tree) = &self.tree {
+            let factor = 10;
+            self.foreground_color = color;
+            let pixmap_size = tree.size.to_screen_size();
+            let [w, h] = [pixmap_size.width() * factor, pixmap_size.height() * factor];
+            let mut pixmap = tiny_skia::Pixmap::new(w, h)
+                .ok_or_else(|| format!("Failed to create SVG Pixmap of size {}x{}", w, h))?;
+            resvg::render(
+                &tree,
+                FitTo::Size(w, h),
+                Default::default(),
+                pixmap.as_mut(),
+            )
+            .ok_or_else(|| "Failed to render SVG".to_owned())?;
+            let mut image =
+                egui::ColorImage::from_rgba_unmultiplied([w as _, h as _], pixmap.data());
+            for pixel in image.pixels.iter_mut() {
+                *pixel = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], pixel.a());
+            }
 
-        self.texture = ui.ctx().load_texture("svg", image, Default::default());
+            self.texture = ui.ctx().load_texture("svg", image, Default::default());
+        }
 
         Ok(())
     }
@@ -119,60 +127,91 @@ impl SubImage {
 }
 
 fn create_sub_image(svg_bytes: &[u8], ui: &Ui, name: &str) -> Result<SubImage, String> {
-    let opt = usvg::Options {
-        resources_dir: None,
-        dpi: 96.0,
-        // Default font is user-agent dependent so we can use whichever we like.
-        font_family: "Times New Roman".to_owned(),
-        font_size: 12.0,
-        languages: vec!["en".to_string()],
-        shape_rendering: usvg::ShapeRendering::GeometricPrecision,
-        text_rendering: usvg::TextRendering::GeometricPrecision,
-        image_rendering: usvg::ImageRendering::OptimizeQuality,
-        default_size: usvg::Size::new(100.0, 100.0).unwrap(),
-        image_href_resolver: usvg::ImageHrefResolver::default(),
-    };
-    let rtree = usvg::Tree::from_data(svg_bytes, &opt).map_err(|err| err.to_string())?;
-    let factor = 10;
-    let pixmap_size = rtree.size.to_screen_size();
-    let [w, h] = [pixmap_size.width() * factor, pixmap_size.height() * factor];
-    let mut pixmap = tiny_skia::Pixmap::new(w, h)
-        .ok_or_else(|| format!("Failed to create SVG Pixmap of size {}x{}", w, h))?;
-    resvg::render(
-        &rtree,
-        FitTo::Size(w, h),
-        Default::default(),
-        pixmap.as_mut(),
-    )
-    .ok_or_else(|| "Failed to render SVG".to_owned())?;
-    let mut image = egui::ColorImage::from_rgba_unmultiplied([w as _, h as _], pixmap.data());
-    for pixel in image.pixels.iter_mut() {
-        *pixel = Color32::from_rgba_unmultiplied(255, 255, 255, pixel.a());
+    if name.ends_with("svg") {
+        let opt = usvg::Options {
+            resources_dir: None,
+            dpi: 96.0,
+            // Default font is user-agent dependent so we can use whichever we like.
+            font_family: "Times New Roman".to_owned(),
+            font_size: 12.0,
+            languages: vec!["en".to_string()],
+            shape_rendering: usvg::ShapeRendering::GeometricPrecision,
+            text_rendering: usvg::TextRendering::GeometricPrecision,
+            image_rendering: usvg::ImageRendering::OptimizeQuality,
+            default_size: usvg::Size::new(100.0, 100.0).unwrap(),
+            image_href_resolver: usvg::ImageHrefResolver::default(),
+        };
+        let rtree = usvg::Tree::from_data(svg_bytes, &opt).map_err(|err| err.to_string())?;
+        let factor = 10;
+        let pixmap_size = rtree.size.to_screen_size();
+        let [w, h] = [pixmap_size.width() * factor, pixmap_size.height() * factor];
+        let mut pixmap = tiny_skia::Pixmap::new(w, h)
+            .ok_or_else(|| format!("Failed to create SVG Pixmap of size {}x{}", w, h))?;
+        resvg::render(
+            &rtree,
+            FitTo::Size(w, h),
+            Default::default(),
+            pixmap.as_mut(),
+        )
+        .ok_or_else(|| "Failed to render SVG".to_owned())?;
+        let mut image = egui::ColorImage::from_rgba_unmultiplied([w as _, h as _], pixmap.data());
+        for pixel in image.pixels.iter_mut() {
+            *pixel = Color32::from_rgba_unmultiplied(255, 255, 255, pixel.a());
+        }
+
+        let texture = ui.ctx().load_texture("svg", image, Default::default());
+
+        let sub_image = SubImage {
+            name: name.into(),
+            tree: ImageSource::Vector(rtree),
+            texture: texture,
+            image_rect: Rect {
+                min: pos2(0., 0.),
+                max: pos2((w / factor) as f32, (h / factor) as f32),
+            },
+            cropping: Rect {
+                min: pos2(0., 0.),
+                max: pos2(1., 1.),
+            },
+            original_aspectratio: (w as f32) / (h as f32),
+            foreground_color: [255, 255, 255],
+        };
+        return Ok(sub_image);
+    } else {
+        let image: image::DynamicImage = image::load_from_memory(svg_bytes).unwrap();
+
+        let size = [image.width() as _, image.height() as _];
+        let image_buffer = image.to_rgba8();
+        let pixels = image_buffer.as_flat_samples();
+        let texture = ui.ctx().load_texture(
+            "image",
+            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()),
+            Default::default(),
+        );
+        let sub_image = SubImage {
+            name: name.into(),
+            tree: ImageSource::Raster(image),
+            texture: texture,
+            image_rect: Rect {
+                min: pos2(0., 0.),
+                max: pos2((size[0] as f32), (size[1] as f32)),
+            },
+            cropping: Rect {
+                min: pos2(0., 0.),
+                max: pos2(1., 1.),
+            },
+            original_aspectratio: (size[0] as f32) / (size[1] as f32),
+            foreground_color: [255, 255, 255],
+        };
+        return Ok(sub_image);
     }
 
-    let texture = ui.ctx().load_texture("svg", image, Default::default());
-
-    let sub_image = SubImage {
-        name: name.into(),
-        tree: rtree,
-        texture: texture,
-        image_rect: Rect {
-            min: pos2(0., 0.),
-            max: pos2((w / factor) as f32, (h / factor) as f32),
-        },
-        cropping: Rect {
-            min: pos2(0., 0.),
-            max: pos2(1., 1.),
-        },
-        original_aspectratio: (w as f32) / (h as f32),
-        foreground_color: [255, 255, 255],
-    };
-    return Ok(sub_image);
+    return Err("test".to_string());
 }
 
 async fn pick_svg_from_dialog() -> SvgSelectionResult {
     let Some(file) = rfd::AsyncFileDialog::new()
-        .add_filter("SVG files", &["svg"])
+        .add_filter("SVG files", &["svg", "png", "jpg"])
         .pick_file()
         .await
     else {
@@ -380,7 +419,6 @@ impl AmvApp {
     }
 
     fn start_svg_dialog(&mut self, ctx: &egui::Context) {
-
         let (tx, rx) = mpsc::channel();
         self.svg_dialog_rx = Some(rx);
 
@@ -532,6 +570,7 @@ impl eframe::App for AmvApp {
                             scale: 1.,
                         };
                     });
+
                     let radius = 5.0;
 
                     //let hover = ctx.input(|x| x.pointer.hover_pos());
@@ -838,41 +877,43 @@ impl eframe::App for AmvApp {
                         &texture.back_ground_color,
                     );
                     for image in self.images.iter() {
-                        let [w, h] = [
-                            image.image_rect.width() as u32,
-                            image.image_rect.height() as u32,
-                        ];
-                        let mut pixmap = tiny_skia::Pixmap::new(w, h)
-                            .ok_or_else(|| {
-                                format!("Failed to create SVG Pixmap of size {}x{}", w, h)
-                            })
+                        if let ImageSource::Vector(tree) = &image.tree {
+                            let [w, h] = [
+                                image.image_rect.width() as u32,
+                                image.image_rect.height() as u32,
+                            ];
+                            let mut pixmap = tiny_skia::Pixmap::new(w, h)
+                                .ok_or_else(|| {
+                                    format!("Failed to create SVG Pixmap of size {}x{}", w, h)
+                                })
+                                .unwrap();
+                            resvg::render(
+                                &tree,
+                                FitTo::Size(w, h),
+                                Default::default(),
+                                pixmap.as_mut(),
+                            )
+                            .ok_or_else(|| "Failed to render SVG".to_owned())
                             .unwrap();
-                        resvg::render(
-                            &image.tree,
-                            FitTo::Size(w, h),
-                            Default::default(),
-                            pixmap.as_mut(),
-                        )
-                        .ok_or_else(|| "Failed to render SVG".to_owned())
-                        .unwrap();
-                        let mut vec = pixmap.data().to_vec();
-                        for i in (0..vec.len()).step_by(4) {
-                            vec[i + 0] = image.foreground_color[0];
-                            vec[i + 1] = image.foreground_color[1];
-                            vec[i + 2] = image.foreground_color[2];
+                            let mut vec = pixmap.data().to_vec();
+                            for i in (0..vec.len()).step_by(4) {
+                                vec[i + 0] = image.foreground_color[0];
+                                vec[i + 1] = image.foreground_color[1];
+                                vec[i + 2] = image.foreground_color[2];
+                            }
+                            let buffer = ImageBuffer::from_vec(w, h, vec).unwrap();
+                            let img = image::DynamicImage::ImageRgba8(buffer);
+                            image::imageops::overlay(
+                                &mut crop,
+                                &img,
+                                (image.image_rect.min.x
+                                    - texture.cropping.min.x * (texture.image.width() as f32))
+                                    as i64,
+                                (image.image_rect.min.y
+                                    - texture.cropping.min.y * (texture.image.height() as f32))
+                                    as i64,
+                            );
                         }
-                        let buffer = ImageBuffer::from_vec(w, h, vec).unwrap();
-                        let img = image::DynamicImage::ImageRgba8(buffer);
-                        image::imageops::overlay(
-                            &mut crop,
-                            &img,
-                            (image.image_rect.min.x
-                                - texture.cropping.min.x * (texture.image.width() as f32))
-                                as i64,
-                            (image.image_rect.min.y
-                                - texture.cropping.min.y * (texture.image.height() as f32))
-                                as i64,
-                        );
                     }
                     export_image(&crop, self.formats[self.selected_format]);
                 }
