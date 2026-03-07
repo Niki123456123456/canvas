@@ -364,15 +364,15 @@ impl eframe::App for AmvApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let my_frame = egui::containers::Frame {
-            inner_margin: egui::style::Margin::same(0.),
-            outer_margin: egui::style::Margin::same(0.),
-            rounding: egui::Rounding::none(),
+            inner_margin: egui::Margin::ZERO,
+            outer_margin: egui::Margin::ZERO,
             shadow: eframe::epaint::Shadow::NONE,
             fill: Color32::BLACK,
             stroke: egui::Stroke::NONE,
+            corner_radius: egui::CornerRadius::ZERO
         };
 
-        egui::Window::new("Logos").show(ctx, |ui| {
+        egui::Window::new("Logos 2").show(ctx, |ui| {
             for image in self.images.iter_mut() {
                 ui.horizontal(|ui| {
                     ui.label(&image.name);
@@ -408,13 +408,14 @@ impl eframe::App for AmvApp {
                     }
                 });
             }
+            ui.label(format!("{}", self.images.len()));
         });
 
         egui::CentralPanel::default()
             .frame(my_frame)
             .show(ctx, |ui| {
                 let hover = ui
-                    .allocate_response(ctx.screen_rect().size(), Sense::click_and_drag())
+                    .allocate_response(ctx.content_rect().size(), Sense::click_and_drag())
                     .hover_pos();
 
                 ui.with_layer_id(LayerId::background(), |ui| {
@@ -676,7 +677,8 @@ impl eframe::App for AmvApp {
                     ui.painter()
                         .rect_filled(current_cropping, 0., state.back_ground_color);
 
-                    egui::Image::new(&state.texture, state.image_rect.size())
+                        // state.image_rect.size()
+                    egui::Image::new(&state.texture)
                         .paint_at(ui, state.image_rect);
 
                     for (i, image) in self.images.iter().enumerate() {
@@ -686,7 +688,8 @@ impl eframe::App for AmvApp {
                             min: state.image_rect.min + min,
                             max: state.image_rect.min + min + image.image_rect.size() * state.scale,
                         };
-                        egui::Image::new(&image.texture, view_rect.size()).paint_at(ui, view_rect);
+                        // , view_rect.size()
+                        egui::Image::new(&image.texture).paint_at(ui, view_rect);
 
                         if self.selected_image == Some(i) || hover_image == Some(i) {
                             draw_crop_rect(ui, &view_rect, crop_hover_info);
@@ -932,7 +935,10 @@ fn export_image(image: &image::DynamicImage, format: image::ImageFormat) {
     let base64 = base64::encode(vec);
 
     let suffix = format.extensions_str().first().unwrap();
-    download(&format!("image.{}", suffix), &base64);
+    unsafe {
+         download(&format!("image.{}", suffix), &base64);
+    }
+   
 }
 
 fn crop_image(image: &DynamicImage, cropping: &Rect, back_ground_color: &Color32) -> DynamicImage {
