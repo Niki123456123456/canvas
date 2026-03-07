@@ -18,14 +18,14 @@
 
 
     <link data-trunk rel="copy-file" href="assets/sw.js" />
-    <link data-trunk rel="copy-file" href="assets/manifest.json" />
+    <!-- <link data-trunk rel="copy-file" href="assets/manifest.json" /> -->
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" data-target-path="assets" />
     <link data-trunk rel="copy-file" href="assets/icon-256.png" data-target-path="assets" />
     <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" data-target-path="assets" />
     <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" data-target-path="assets" />
 
 
-    <link rel="manifest" href="manifest.json">
+    <!-- <link rel="manifest" href="manifest.json"> -->
     <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
@@ -147,9 +147,27 @@
 
             document.body.removeChild(element);
         }
-        // We disable caching during development so that we always view the latest version.
-        if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
-            window.addEventListener('load', function () {
+        // Do not use a service worker in local/dev mode to avoid stale reloads.
+        const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+        const isDevMode = isLocalhost || window.location.hash === "#dev";
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', async function () {
+                if (isDevMode) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(registrations.map(function (registration) {
+                        return registration.unregister();
+                    }));
+
+                    if ('caches' in window) {
+                        const cacheKeys = await caches.keys();
+                        await Promise.all(cacheKeys.map(function (cacheKey) {
+                            return caches.delete(cacheKey);
+                        }));
+                    }
+                    return;
+                }
+
                 navigator.serviceWorker.register('sw.js');
             });
         }
