@@ -3,11 +3,14 @@ use egui::{pos2, vec2, Color32, LayerId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use image::{ColorType, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba};
 use resvg::FitTo;
 use std::io::Cursor;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use usvg::{ScreenSize, ShapeRendering, StrokeMiterlimit, TreeParsing};
 use wasm_bindgen::prelude::*;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
+type SvgSelection = Option<(String, Vec<u8>)>;
+type SvgSelectionResult = Result<SvgSelection, String>;
+type SvgDialogReceiver = Receiver<SvgSelectionResult>;
 
 #[wasm_bindgen]
 extern "C" {
@@ -25,6 +28,8 @@ pub struct AmvApp {
     formats: Vec<ImageFormat>,
     #[serde(skip)]
     images: Vec<SubImage>,
+    #[serde(skip)]
+    svg_dialog_rx: Option<SvgDialogReceiver>,
     selected_image: Option<usize>,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -163,6 +168,21 @@ fn create_sub_image(svg_bytes: &[u8], ui: &Ui, name: &str) -> Result<SubImage, S
         foreground_color: [255, 255, 255],
     };
     return Ok(sub_image);
+}
+
+async fn pick_svg_from_dialog() -> SvgSelectionResult {
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .add_filter("SVG files", &["svg"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+
+    let name = file.file_name();
+    let bytes = file.read().await;
+
+    Ok(Some((name, bytes)))
 }
 
 fn is_hover_over_subimage(
@@ -342,6 +362,7 @@ impl Default for AmvApp {
             lock_aspectratio: true,
             formats: vec![ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::Qoi],
             images: vec![],
+            svg_dialog_rx: None,
             selected_image: None,
         }
     }
@@ -349,11 +370,54 @@ impl Default for AmvApp {
 
 impl AmvApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
+        // if let Some(storage) = cc.storage {
+        //     let app = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        //     app.
+        //     return app;
+        // }
 
         Default::default()
+    }
+
+    fn start_svg_dialog(&mut self, ctx: &egui::Context) {
+
+        let (tx, rx) = mpsc::channel();
+        self.svg_dialog_rx = Some(rx);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || {
+            let result = pollster::block_on(pick_svg_from_dialog());
+            let _ = tx.send(result);
+        });
+
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = pick_svg_from_dialog().await;
+            let _ = tx.send(result);
+        });
+
+        ctx.request_repaint();
+    }
+
+    fn take_svg_dialog_result(&mut self) -> Option<SvgSelectionResult> {
+        let recv_result = match self.svg_dialog_rx.as_ref() {
+            Some(rx) => rx.try_recv(),
+            None => return None,
+        };
+
+        match recv_result {
+            Ok(result) => {
+                self.svg_dialog_rx = None;
+                Some(result)
+            }
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.svg_dialog_rx = None;
+                Some(Err(
+                    "SVG file dialog task disconnected before completing".to_owned()
+                ))
+            }
+        }
     }
 }
 
@@ -363,16 +427,31 @@ impl eframe::App for AmvApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.svg_dialog_rx.is_some() {
+            ctx.request_repaint();
+        }
+
         let my_frame = egui::containers::Frame {
             inner_margin: egui::Margin::ZERO,
             outer_margin: egui::Margin::ZERO,
             shadow: eframe::epaint::Shadow::NONE,
             fill: Color32::BLACK,
             stroke: egui::Stroke::NONE,
-            corner_radius: egui::CornerRadius::ZERO
+            corner_radius: egui::CornerRadius::ZERO,
         };
 
-        egui::Window::new("Logos 2").show(ctx, |ui| {
+        egui::Window::new("Logos").show(ctx, |ui| {
+            if let Some(result) = self.take_svg_dialog_result() {
+                match result {
+                    Ok(Some((name, svg_bytes))) => match create_sub_image(&svg_bytes, ui, &name) {
+                        Ok(sub_image) => self.images.push(sub_image),
+                        Err(err) => eprintln!("{err}"),
+                    },
+                    Ok(None) => {}
+                    Err(err) => eprintln!("{err}"),
+                }
+            }
+
             for image in self.images.iter_mut() {
                 ui.horizontal(|ui| {
                     ui.label(&image.name);
@@ -408,7 +487,9 @@ impl eframe::App for AmvApp {
                     }
                 });
             }
-            ui.label(format!("{}", self.images.len()));
+            if ui.button("+").clicked() {
+                self.start_svg_dialog(ctx);
+            }
         });
 
         egui::CentralPanel::default()
@@ -451,13 +532,6 @@ impl eframe::App for AmvApp {
                             scale: 1.,
                         };
                     });
-
-                    if self.images.len() == 0 {
-                        let svg_bytes = include_bytes!("../assets/spacex.svg");
-                        let sub_image = create_sub_image(svg_bytes, ui, "spacex.svg").unwrap();
-                        self.images.push(sub_image);
-                    }
-
                     let radius = 5.0;
 
                     //let hover = ctx.input(|x| x.pointer.hover_pos());
@@ -677,9 +751,8 @@ impl eframe::App for AmvApp {
                     ui.painter()
                         .rect_filled(current_cropping, 0., state.back_ground_color);
 
-                        // state.image_rect.size()
-                    egui::Image::new(&state.texture)
-                        .paint_at(ui, state.image_rect);
+                    // state.image_rect.size()
+                    egui::Image::new(&state.texture).paint_at(ui, state.image_rect);
 
                     for (i, image) in self.images.iter().enumerate() {
                         let min =
@@ -706,8 +779,7 @@ impl eframe::App for AmvApp {
         egui::TopBottomPanel::bottom("my_panel").show(ctx, |ui| {
             let mut texture: &mut AppState = self.state.get_or_insert_with(|| {
                 let image_bytes = include_bytes!("../assets/starship.jpg");
-                let image: image::DynamicImage =
-                    image::load_from_memory(image_bytes).unwrap();
+                let image: image::DynamicImage = image::load_from_memory(image_bytes).unwrap();
 
                 let size = [image.width() as _, image.height() as _];
                 let image_buffer = image.to_rgba8();
@@ -736,7 +808,6 @@ impl eframe::App for AmvApp {
                     scale: 1.,
                 };
             });
-
 
             ui.horizontal(|ui| {
                 egui::ComboBox::from_label("")
@@ -767,36 +838,45 @@ impl eframe::App for AmvApp {
                         &texture.back_ground_color,
                     );
                     for image in self.images.iter() {
-                        let pixmap_size = image.tree.size.to_screen_size();
-                        let [w, h] = [image.image_rect.width() as u32, image.image_rect.height() as u32];
-                        let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or_else(|| {
-                            format!("Failed to create SVG Pixmap of size {}x{}", w, h)
-                        }).unwrap();
+                        let [w, h] = [
+                            image.image_rect.width() as u32,
+                            image.image_rect.height() as u32,
+                        ];
+                        let mut pixmap = tiny_skia::Pixmap::new(w, h)
+                            .ok_or_else(|| {
+                                format!("Failed to create SVG Pixmap of size {}x{}", w, h)
+                            })
+                            .unwrap();
                         resvg::render(
                             &image.tree,
                             FitTo::Size(w, h),
                             Default::default(),
                             pixmap.as_mut(),
                         )
-                        .ok_or_else(|| "Failed to render SVG".to_owned()).unwrap();
-                        let mut  vec = pixmap.data().to_vec();
+                        .ok_or_else(|| "Failed to render SVG".to_owned())
+                        .unwrap();
+                        let mut vec = pixmap.data().to_vec();
                         for i in (0..vec.len()).step_by(4) {
-                            vec[i+0] = image.foreground_color[0];
-                            vec[i+1] = image.foreground_color[1];
-                            vec[i+2] = image.foreground_color[2];
+                            vec[i + 0] = image.foreground_color[0];
+                            vec[i + 1] = image.foreground_color[1];
+                            vec[i + 2] = image.foreground_color[2];
                         }
                         let buffer = ImageBuffer::from_vec(w, h, vec).unwrap();
                         let img = image::DynamicImage::ImageRgba8(buffer);
                         image::imageops::overlay(
                             &mut crop,
                             &img,
-                            ( image.image_rect.min.x - texture.cropping.min.x * (texture.image.width() as f32) ) as i64 ,
-                            ( image.image_rect.min.y - texture.cropping.min.y* (texture.image.height() as f32) )  as i64,
+                            (image.image_rect.min.x
+                                - texture.cropping.min.x * (texture.image.width() as f32))
+                                as i64,
+                            (image.image_rect.min.y
+                                - texture.cropping.min.y * (texture.image.height() as f32))
+                                as i64,
                         );
                     }
                     export_image(&crop, self.formats[self.selected_format]);
                 }
-            
+
                 ui.color_edit_button_srgba(&mut texture.back_ground_color);
 
                 ui.label(VERSION);
@@ -936,9 +1016,8 @@ fn export_image(image: &image::DynamicImage, format: image::ImageFormat) {
 
     let suffix = format.extensions_str().first().unwrap();
     unsafe {
-         download(&format!("image.{}", suffix), &base64);
+        download(&format!("image.{}", suffix), &base64);
     }
-   
 }
 
 fn crop_image(image: &DynamicImage, cropping: &Rect, back_ground_color: &Color32) -> DynamicImage {
