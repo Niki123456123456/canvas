@@ -1,7 +1,8 @@
 use eframe::glow::HasContext;
 use egui::{pos2, vec2, Color32, LayerId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
-use image::{ColorType, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba};
+use image::{ColorType, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba, imageops};
 use resvg::FitTo;
+use std::borrow::Cow;
 use std::io::Cursor;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use usvg::{ScreenSize, ShapeRendering, StrokeMiterlimit, TreeParsing};
@@ -65,7 +66,7 @@ pub enum ImageSource {
 
 struct SubImage {
     name: String,
-    tree: ImageSource,
+    source: ImageSource,
     texture: egui::TextureHandle,
     image_rect: Rect,
     cropping: Rect,
@@ -75,7 +76,7 @@ struct SubImage {
 
 impl SubImage {
     fn change_forgroundcolor(&mut self, color: [u8; 3], ui: &Ui) -> Result<(), String> {
-        if let ImageSource::Vector(tree) = &self.tree {
+        if let ImageSource::Vector(tree) = &self.source {
             let factor = 10;
             self.foreground_color = color;
             let pixmap_size = tree.size.to_screen_size();
@@ -163,7 +164,7 @@ fn create_sub_image(svg_bytes: &[u8], ui: &Ui, name: &str) -> Result<SubImage, S
 
         let sub_image = SubImage {
             name: name.into(),
-            tree: ImageSource::Vector(rtree),
+            source: ImageSource::Vector(rtree),
             texture: texture,
             image_rect: Rect {
                 min: pos2(0., 0.),
@@ -190,7 +191,7 @@ fn create_sub_image(svg_bytes: &[u8], ui: &Ui, name: &str) -> Result<SubImage, S
         );
         let sub_image = SubImage {
             name: name.into(),
-            tree: ImageSource::Raster(image),
+            source: ImageSource::Raster(image),
             texture: texture,
             image_rect: Rect {
                 min: pos2(0., 0.),
@@ -482,7 +483,7 @@ impl eframe::App for AmvApp {
             if let Some(result) = self.take_svg_dialog_result() {
                 match result {
                     Ok(Some((name, svg_bytes))) => match create_sub_image(&svg_bytes, ui, &name) {
-                        Ok(sub_image) => self.images.insert(0,sub_image),
+                        Ok(sub_image) => self.images.insert(0, sub_image),
                         Err(err) => eprintln!("{err}"),
                     },
                     Ok(None) => {}
@@ -496,34 +497,36 @@ impl eframe::App for AmvApp {
             for image in self.images.iter_mut() {
                 ui.horizontal(|ui| {
                     ui.label(&image.name);
-                    let mut color = image.foreground_color.clone();
-                    ui.color_edit_button_srgb(&mut color);
-                    if color != image.foreground_color {
-                        image.foreground_color = color;
-                        image.change_forgroundcolor(color, ui);
-                    }
-                    if ui.button("auto").clicked() {
-                        if let Some(state) = &self.state {
-                            let crop = state.image.crop_imm(
-                                image.image_rect.min.x as _,
-                                image.image_rect.min.y as _,
-                                image.image_rect.width() as _,
-                                image.image_rect.height() as _,
-                            );
-                            let avg = calculate_average(&crop);
-                            let avg = Color32::from_rgb(avg[0], avg[1], avg[2]);
-                            let diff_black = difference(&avg, &Color32::BLACK) - 1.;
-                            let diff_white = difference(&avg, &Color32::WHITE);
-                            println!("b {} w {}", diff_black, diff_white);
-                            let new_color = if diff_black > diff_white {
-                                Color32::BLACK
-                            } else {
-                                Color32::WHITE
-                            };
-                            let _ = image.change_forgroundcolor(
-                                [new_color.r(), new_color.g(), new_color.b()],
-                                ui,
-                            );
+                    if let ImageSource::Vector(_) = image.source {
+                        let mut color = image.foreground_color.clone();
+                        ui.color_edit_button_srgb(&mut color);
+                        if color != image.foreground_color {
+                            image.foreground_color = color;
+                            image.change_forgroundcolor(color, ui);
+                        }
+                        if ui.button("auto").clicked() {
+                            if let Some(state) = &self.state {
+                                let crop = state.image.crop_imm(
+                                    image.image_rect.min.x as _,
+                                    image.image_rect.min.y as _,
+                                    image.image_rect.width() as _,
+                                    image.image_rect.height() as _,
+                                );
+                                let avg = calculate_average(&crop);
+                                let avg = Color32::from_rgb(avg[0], avg[1], avg[2]);
+                                let diff_black = difference(&avg, &Color32::BLACK) - 1.;
+                                let diff_white = difference(&avg, &Color32::WHITE);
+                                println!("b {} w {}", diff_black, diff_white);
+                                let new_color = if diff_black > diff_white {
+                                    Color32::BLACK
+                                } else {
+                                    Color32::WHITE
+                                };
+                                let _ = image.change_forgroundcolor(
+                                    [new_color.r(), new_color.g(), new_color.b()],
+                                    ui,
+                                );
+                            }
                         }
                     }
                 });
@@ -876,36 +879,43 @@ impl eframe::App for AmvApp {
                         &texture.cropping,
                         &texture.back_ground_color,
                     );
-                    for image in self.images.iter() {
-                        if let ImageSource::Vector(tree) = &image.tree {
-                            let [w, h] = [
-                                image.image_rect.width() as u32,
-                                image.image_rect.height() as u32,
-                            ];
-                            let mut pixmap = tiny_skia::Pixmap::new(w, h)
-                                .ok_or_else(|| {
-                                    format!("Failed to create SVG Pixmap of size {}x{}", w, h)
-                                })
+                    for image in self.images.iter().rev() {
+                         let [w, h] = [
+                                    image.image_rect.width() as u32,
+                                    image.image_rect.height() as u32,
+                                ];
+                        let dynamic_image : Cow<'_, image::DynamicImage> = match &image.source {
+                            ImageSource::Vector(tree) => {
+                                let mut pixmap = tiny_skia::Pixmap::new(w, h)
+                                    .ok_or_else(|| {
+                                        format!("Failed to create SVG Pixmap of size {}x{}", w, h)
+                                    })
+                                    .unwrap();
+                                resvg::render(
+                                    &tree,
+                                    FitTo::Size(w, h),
+                                    Default::default(),
+                                    pixmap.as_mut(),
+                                )
+                                .ok_or_else(|| "Failed to render SVG".to_owned())
                                 .unwrap();
-                            resvg::render(
-                                &tree,
-                                FitTo::Size(w, h),
-                                Default::default(),
-                                pixmap.as_mut(),
-                            )
-                            .ok_or_else(|| "Failed to render SVG".to_owned())
-                            .unwrap();
-                            let mut vec = pixmap.data().to_vec();
-                            for i in (0..vec.len()).step_by(4) {
-                                vec[i + 0] = image.foreground_color[0];
-                                vec[i + 1] = image.foreground_color[1];
-                                vec[i + 2] = image.foreground_color[2];
+                                let mut vec = pixmap.data().to_vec();
+                                for i in (0..vec.len()).step_by(4) {
+                                    vec[i + 0] = image.foreground_color[0];
+                                    vec[i + 1] = image.foreground_color[1];
+                                    vec[i + 2] = image.foreground_color[2];
+                                }
+                                let buffer = ImageBuffer::from_vec(w, h, vec).unwrap();
+                                Cow::Owned(image::DynamicImage::ImageRgba8(buffer))
                             }
-                            let buffer = ImageBuffer::from_vec(w, h, vec).unwrap();
-                            let img = image::DynamicImage::ImageRgba8(buffer);
-                            image::imageops::overlay(
+                            ImageSource::Raster(dynamic_image) => {
+                                 Cow::Owned( dynamic_image.resize(w, h, imageops::Triangle))
+                            },
+                        };
+                       
+                        image::imageops::overlay(
                                 &mut crop,
-                                &img,
+                                dynamic_image.as_ref(),
                                 (image.image_rect.min.x
                                     - texture.cropping.min.x * (texture.image.width() as f32))
                                     as i64,
@@ -913,7 +923,6 @@ impl eframe::App for AmvApp {
                                     - texture.cropping.min.y * (texture.image.height() as f32))
                                     as i64,
                             );
-                        }
                     }
                     export_image(&crop, self.formats[self.selected_format]);
                 }
