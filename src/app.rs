@@ -478,11 +478,11 @@ impl eframe::App for AmvApp {
             corner_radius: egui::CornerRadius::ZERO,
         };
 
-        egui::Window::new("Logos").show(ctx, |ui| {
+        egui::Window::new("Layers").show(ctx, |ui| {
             if let Some(result) = self.take_svg_dialog_result() {
                 match result {
                     Ok(Some((name, svg_bytes))) => match create_sub_image(&svg_bytes, ui, &name) {
-                        Ok(sub_image) => self.images.push(sub_image),
+                        Ok(sub_image) => self.images.insert(0,sub_image),
                         Err(err) => eprintln!("{err}"),
                     },
                     Ok(None) => {}
@@ -490,6 +490,9 @@ impl eframe::App for AmvApp {
                 }
             }
 
+            if ui.button("+").clicked() {
+                self.start_svg_dialog(ctx);
+            }
             for image in self.images.iter_mut() {
                 ui.horizontal(|ui| {
                     ui.label(&image.name);
@@ -517,16 +520,13 @@ impl eframe::App for AmvApp {
                             } else {
                                 Color32::WHITE
                             };
-                            image.change_forgroundcolor(
+                            let _ = image.change_forgroundcolor(
                                 [new_color.r(), new_color.g(), new_color.b()],
                                 ui,
                             );
                         }
                     }
                 });
-            }
-            if ui.button("+").clicked() {
-                self.start_svg_dialog(ctx);
             }
         });
 
@@ -793,7 +793,7 @@ impl eframe::App for AmvApp {
                     // state.image_rect.size()
                     egui::Image::new(&state.texture).paint_at(ui, state.image_rect);
 
-                    for (i, image) in self.images.iter().enumerate() {
+                    for (i, image) in self.images.iter().enumerate().rev() {
                         let min =
                             vec2(image.image_rect.min.x, image.image_rect.min.y) * state.scale;
                         let view_rect = Rect {
