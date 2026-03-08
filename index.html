@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+<!-- Disable zooming: -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<head>
+    <!-- change this to your project name -->
+    <title>Canvas</title>
+
+    <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
+    
+<script type="module">
+import init, * as bindings from 'https://niki123456123456.github.io/canvas/eframe_template.js';
+const wasm = await init({ module_or_path: 'https://niki123456123456.github.io/canvas/eframe_template_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
+    <base href="https://niki123456123456.github.io/canvas/" />
+
+    <link rel="icon" href="https://niki123456123456.github.io/canvas/favicon.ico" integrity="sha384-jNOAE6jgE03LznIulCTVP6BH4NrTuROFjP9wj8bV1UUMJKtZAvstFpIAP3PDcFpx"/>
+
+
+    
+    <!-- <link data-trunk rel="copy-file" href="assets/manifest.json" /> -->
+    
+    
+    
+    
+
+
+    <!-- <link rel="manifest" href="manifest.json"> -->
+    <link rel="apple-touch-icon" href="assets/icon_ios_touch_192.png">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
+
+    <style>
+        html {
+            /* Remove touch delay: */
+            touch-action: manipulation;
+        }
+
+        body {
+            /* Light mode background color for what is not covered by the egui canvas,
+            or where the egui canvas is translucent. */
+            background: #909090;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                /* Dark mode background color for what is not covered by the egui canvas,
+                or where the egui canvas is translucent. */
+                background: #404040;
+            }
+        }
+
+        /* Allow canvas to fill entire web page: */
+        html,
+        body {
+            overflow: hidden;
+            margin: 0 !important;
+            padding: 0 !important;
+            height: 100%;
+            width: 100%;
+        }
+
+        /* Make canvas fill entire document: */
+        canvas {
+            margin-right: auto;
+            margin-left: auto;
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .centered {
+            margin-right: auto;
+            margin-left: auto;
+            display: block;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #f0f0f0;
+            font-size: 24px;
+            font-family: Ubuntu-Light, Helvetica, sans-serif;
+            text-align: center;
+        }
+
+        /* ---------------------------------------------- */
+        /* Loading animation from https://loading.io/css/ */
+        .lds-dual-ring {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+        }
+
+        .lds-dual-ring:after {
+            content: " ";
+            display: block;
+            width: 24px;
+            height: 24px;
+            margin: 0px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            border-color: #fff transparent #fff transparent;
+            animation: lds-dual-ring 1.2s linear infinite;
+        }
+
+        @keyframes lds-dual-ring {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+<link rel="modulepreload" href="https://niki123456123456.github.io/canvas/eframe_template.js" crossorigin="anonymous" integrity="sha384-QGP2zbETcGzLnGNPXcQHKHNKvKnT3yQcjXErCQQ02Js0+M14VOvwfrQR/iAln58B"><link rel="preload" href="https://niki123456123456.github.io/canvas/eframe_template_bg.wasm" crossorigin="anonymous" integrity="sha384-Kb54UMxu0Do4EWXuSv5ZBD7mYGArHndtr2V+aqGgMwVMNL6Ki23q++bqYEW8EYBf" as="fetch" type="application/wasm"></head>
+
+<body>
+    <!-- The WASM code will resize the canvas dynamically -->
+    <!-- the id is hardcoded in main.rs . so, make sure both match. -->
+    <canvas id="the_canvas_id"></canvas>
+
+    <!-- the loading spinner will be removed in main.rs -->
+    <div class="centered" id="loading_text">
+        <noscript>You need javascript to use this website</noscript>
+        <p style="font-size:16px">
+            Loading…
+        </p>
+        <div class="lds-dual-ring"></div>
+    </div>
+
+    <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
+    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
+    <script>
+        function download(filename, text) {
+            var element = document.createElement('a');
+            element.setAttribute('href', 'data:application/octet-stream;base64,' + text);
+            element.setAttribute('download', filename);
+
+            element.style.display = 'none';
+            document.body.appendChild(element);
+
+            element.click();
+
+            document.body.removeChild(element);
+        }
+        // Do not use a service worker in local/dev mode to avoid stale reloads.
+        const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+        const isDevMode = isLocalhost || window.location.hash === "#dev";
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', async function () {
+                if (isDevMode) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(registrations.map(function (registration) {
+                        return registration.unregister();
+                    }));
+
+                    if ('caches' in window) {
+                        const cacheKeys = await caches.keys();
+                        await Promise.all(cacheKeys.map(function (cacheKey) {
+                            return caches.delete(cacheKey);
+                        }));
+                    }
+                    return;
+                }
+
+                navigator.serviceWorker.register('sw.js');
+            });
+        }
+    </script>
+</body>
+
+</html>
+
+<!-- Powered by egui: https://github.com/emilk/egui/ -->
