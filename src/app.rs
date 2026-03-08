@@ -934,7 +934,12 @@ impl eframe::App for AmvApp {
                         }
                     });
                 if ui.button("Download").clicked() {
-                    let mut crop = crop_image(
+                    // let mut crop = crop_image(
+                    //     &texture.image,
+                    //     &texture.cropping,
+                    //     &texture.back_ground_color,
+                    // );
+                    let mut crop = create_unicolor_image(
                         &texture.image,
                         &texture.cropping,
                         &texture.back_ground_color,
@@ -1131,6 +1136,22 @@ fn export_image(image: &image::DynamicImage, format: image::ImageFormat) {
     unsafe {
         download(&format!("image.{}", suffix), &base64);
     }
+}
+
+fn create_unicolor_image(
+    image: &DynamicImage,
+    cropping: &Rect,
+    back_ground_color: &Color32,
+) -> DynamicImage {
+    let width = (image.width() as f32);
+    let height = (image.height() as f32);
+    let x = (width * cropping.min.x) as i32;
+    let y = (height * cropping.min.y) as i32;
+    let w = (width * cropping.max.x) as i32 - x;
+    let h = (height * cropping.max.y) as i32 - y;
+
+    let mut img = create_image(w as u32, h as u32, back_ground_color);
+    return img;
 }
 
 fn crop_image(image: &DynamicImage, cropping: &Rect, back_ground_color: &Color32) -> DynamicImage {
