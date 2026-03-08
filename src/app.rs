@@ -845,7 +845,7 @@ impl eframe::App for AmvApp {
                     ui.painter()
                         .rect_filled(current_cropping, 0., state.back_ground_color);
 
-                    egui::Image::new(&state.texture).paint_at(ui, state.image_rect);
+                    //egui::Image::new(&state.texture).paint_at(ui, state.image_rect);
 
                     for (i, image) in self.images.iter().enumerate().rev() {
                         let min = image.image_rect.min.to_vec2() * state.scale;
@@ -865,7 +865,7 @@ impl eframe::App for AmvApp {
                         }
                     }
 
-                    draw_crop_blending(ui, &current_cropping, &state.image_rect);
+                    //draw_crop_blending(ui, &current_cropping, &state.image_rect);
                     if self.selected_image.is_none() {
                         draw_selection_rect(
                             ui,
